@@ -1,12 +1,15 @@
 #!/bin/sh
 #===============================================================================
 # Classic OS — Automated ARMv8-A 32-bit (armhf) Cross-Build & Packaging Script
-# Runs inside the VirtualBox Linux VM (via Make or CMake) and verifies ELF ABI.
+# Runs inside the VirtualBox Linux VM or the CI Debian 10 container (via Make or
+# CMake) and then verifies the ELF ABI, glibc compatibility and package layout
+# with scripts/verify_armhf.sh (the build fails if any check fails).
 #===============================================================================
 set -eu
+unset CDPATH
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-PROJECT_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 BUILD_SYSTEM="${1:-make}" # "make" or "cmake"
 
 cd "${PROJECT_ROOT}"
@@ -18,6 +21,7 @@ if ! command -v arm-linux-gnueabihf-g++ >/dev/null 2>&1; then
 fi
 
 echo "=== Building Classic OS for PlayStation Classic (ARMv8-A 32-bit armhf) via ${BUILD_SYSTEM} ==="
+arm-linux-gnueabihf-g++ --version | head -n 1
 
 if [ "${BUILD_SYSTEM}" = "cmake" ]; then
     rm -rf build-arm
@@ -31,24 +35,24 @@ if [ "${BUILD_SYSTEM}" = "cmake" ]; then
     arm-linux-gnueabihf-strip build/classic_os
     mkdir -p package/opt/classic_os/assets
     cp -f build/classic_os package/opt/classic_os/classic_os
-    cp -rf assets/* package/opt/classic_os/assets/ 2>/dev/null || true
+    cp -rf assets/* package/opt/classic_os/assets/
     chmod +x package/opt/classic_os/classic_os
     chmod +x package/opt/classic_os/launch.sh
     chmod +x package/opt/classic_os/bootctl.sh
     chmod +x package/etc/project_eris/FUNC/0095_classic_os_boot.sh
     chmod +x package/etc/project_eris/SUP/launchers/classic_os/launch.sh
-else
+elif [ "${BUILD_SYSTEM}" = "make" ]; then
     make clean
     make package TARGET_ARCH=armhf
+else
+    echo "[ERROR] Unknown build system '${BUILD_SYSTEM}'. Use 'make' or 'cmake'." >&2
+    exit 1
 fi
 
-echo "=== Verifying ARM ELF Binary & ABI Attributes ==="
-file package/opt/classic_os/classic_os
-readelf -h -d -A package/opt/classic_os/classic_os | grep -E "Class:|Machine:|Flags:|NEEDED|Tag_CPU_name|Tag_CPU_arch|Tag_FP_arch" || true
+file package/opt/classic_os/classic_os || true
 
-echo "=== Validating POSIX Launcher & Boot Scripts ==="
-sh -n package/opt/classic_os/launch.sh
-sh -n package/opt/classic_os/bootctl.sh
-sh -n package/etc/project_eris/FUNC/0095_classic_os_boot.sh
-sh -n package/etc/project_eris/SUP/launchers/classic_os/launch.sh
+# Verifies ARM ELF/ABI, DT_NEEDED, glibc symbol versions, package contents and
+# POSIX validity of the launcher & boot scripts. Exits non-zero on any failure.
+sh "${SCRIPT_DIR}/verify_armhf.sh" package/opt/classic_os/classic_os
+
 echo "[OK] Package ready in: ${PROJECT_ROOT}/package/"
