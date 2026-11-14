@@ -1,0 +1,6 @@
+{
+  "name": "Classic OS",
+  "target": "/media/project_eris/opt/classic_os/launch.sh",
+  "image": "/media/project_eris/etc/project_eris/SUP/launchers/classic_os/classicos.png",
+  "hover_image": "/media/project_eris/etc/project_eris/SUP/launchers/classic_os/classicos.png"
+}
