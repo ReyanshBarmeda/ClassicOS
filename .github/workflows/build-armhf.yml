@@ -1,53 +1,86 @@
-﻿name: Classic OS ARM Build
+name: Classic OS ARM Build
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'assets/**'
+      - 'package/**'
+      - 'scripts/**'
+      - 'cmake/**'
+      - 'Makefile'
+      - 'CMakeLists.txt'
+      - '.github/workflows/build-armhf.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'assets/**'
+      - 'package/**'
+      - 'scripts/**'
+      - 'cmake/**'
+      - 'Makefile'
+      - 'CMakeLists.txt'
+      - '.github/workflows/build-armhf.yml'
 
 permissions:
   contents: read
 
+concurrency:
+  group: build-armhf-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Highest GLIBC symbol version the PlayStation Classic can load (see BUILD_INSTRUCTIONS.md)
+  PSC_MAX_GLIBC: "2.28"
+
 jobs:
   build-armhf:
+    name: Build armhf (Debian 10 container, glibc 2.28)
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Enable ARMHF packages
+      - name: Lint launcher/boot scripts and boot menu JSON
         run: |
-          sudo dpkg --add-architecture armhf
-          sudo apt-get update
+          status=0
+          for f in $(git ls-files '*.sh' '*.cfg'); do
+            if sh -n "$f"; then echo "ok   $f"; else echo "FAIL $f"; status=1; fi
+          done
+          python3 -m json.tool package/etc/boot_menu/boot_items/004_classic_os.json > /dev/null
+          exit "$status"
 
-      - name: Install build tools and ARM libraries
+      - name: Build, package and verify in Debian 10 (glibc 2.28)
         run: |
-          sudo apt-get install -y \
-            build-essential \
-            make \
-            file \
-            binutils-arm-linux-gnueabihf \
-            gcc-arm-linux-gnueabihf \
-            g++-arm-linux-gnueabihf \
-            libc6-dev-armhf-cross \
-            libsdl2-dev:armhf \
-            libpng-dev:armhf \
-            libsqlite3-dev:armhf
+          docker run --rm \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            -e PSC_MAX_GLIBC \
+            -v "$GITHUB_WORKSPACE":/src \
+            -w /src \
+            debian:buster \
+            sh scripts/ci_build_buster.sh
 
-      - name: Build and package ARM executable
+      - name: Create candidate archive
         run: |
-          chmod +x scripts/build_armhf.sh
-          ./scripts/build_armhf.sh make
-
-      - name: Verify ARM executable
-        run: |
-          file package/opt/classic_os/classic_os
-          arm-linux-gnueabihf-readelf -h package/opt/classic_os/classic_os
-          arm-linux-gnueabihf-readelf -d package/opt/classic_os/classic_os
+          short_sha="${GITHUB_SHA::7}"
+          mkdir -p dist
+          tar -C package --owner=0 --group=0 -czf "dist/ClassicOS-ARMHF-${short_sha}.tar.gz" .
+          (cd dist && sha256sum "ClassicOS-ARMHF-${short_sha}.tar.gz" > "ClassicOS-ARMHF-${short_sha}.tar.gz.sha256")
+          echo "Archive contents (modes preserved):"
+          tar -tvzf "dist/ClassicOS-ARMHF-${short_sha}.tar.gz"
+          cat "dist/ClassicOS-ARMHF-${short_sha}.tar.gz.sha256"
 
       - name: Upload build package
         uses: actions/upload-artifact@v4
         with:
           name: ClassicOS-ARMHF-candidate
-          path: package/
+          path: dist/
           if-no-files-found: error
+          retention-days: 30
