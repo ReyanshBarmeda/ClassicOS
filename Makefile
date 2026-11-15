@@ -44,6 +44,7 @@ ifeq ($(TARGET_ARCH),armhf)
     endif
     CXX            := $(CROSS_PREFIX)g++
     STRIP          := $(CROSS_PREFIX)strip
+    READELF        := $(CROSS_PREFIX)readelf
     ARCH_FLAGS     := -march=armv8-a+crc -mtune=cortex-a35 -mfpu=neon-fp-armv8 -mfloat-abi=hard
     LINK_RPATH     := -Wl,-rpath,/usr/sony/lib:/media/project_eris/lib -static-libstdc++ -static-libgcc -Wl,--allow-shlib-undefined
     SYS_LIBDIR     ?= /usr/lib/arm-linux-gnueabihf
@@ -51,6 +52,7 @@ else ifeq ($(TARGET_ARCH),host)
     BUILD_DIR      ?= build-host
     CXX            ?= g++
     STRIP          ?= strip
+    READELF        ?= readelf
     ARCH_FLAGS     ?=
     LINK_RPATH     ?=
     SYS_LIBDIR     ?= /usr/lib/x86_64-linux-gnu
@@ -91,7 +93,7 @@ ifneq ($(TARGET_ARCH),armhf)
 	$(error Refusing to package a non-ARM binary (TARGET_ARCH=$(TARGET_ARCH)). Run 'make package' with TARGET_ARCH=armhf)
 endif
 	$(MAKE) TARGET_ARCH=armhf BUILD_DIR=build $(BUILD_DIR)/$(TARGET)
-	@if ! readelf -h $(BUILD_DIR)/$(TARGET) 2>/dev/null | grep -q "Machine:.*ARM"; then \
+	@if ! $(READELF) -h $(BUILD_DIR)/$(TARGET) | grep -q "Machine:.*ARM"; then \
 		echo "[ERROR] $(BUILD_DIR)/$(TARGET) is not a 32-bit ARM ELF binary! Aborting package step."; \
 		exit 1; \
 	fi
@@ -106,7 +108,7 @@ endif
 	chmod +x package/etc/project_eris/SUP/launchers/classic_os/launch.sh
 
 verify-abi: $(BUILD_DIR)/$(TARGET)
-	readelf -h -d -V -A $(BUILD_DIR)/$(TARGET)
+	$(READELF) -h -d -V -A $(BUILD_DIR)/$(TARGET)
 
 clean:
 	rm -rf build build-host build-arm
