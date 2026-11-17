@@ -71,7 +71,7 @@ LDLIBS       ?= -lSDL2 -lpng16 -lsqlite3 -lpthread -ldl -lm
 CXXFLAGS     := -std=c++17 -O2 -Wall -Wextra -fPIE -ffunction-sections -fdata-sections $(ARCH_FLAGS) -I$(INC_DIR) $(EXTRA_CXXFLAGS)
 LDFLAGS      := -pie -Wl,--gc-sections $(LINK_RPATH) $(EXTRA_LDFLAGS)
 
-.PHONY: all arm host clean package verify-abi
+.PHONY: all arm host clean package verify-abi test
 
 all: $(BUILD_DIR)/$(TARGET)
 
@@ -104,8 +104,13 @@ endif
 	chmod +x package/opt/classic_os/$(TARGET)
 	chmod +x package/opt/classic_os/launch.sh
 	chmod +x package/opt/classic_os/bootctl.sh
+	chmod +x package/opt/classic_os/check_runtime.sh
 	chmod +x package/etc/project_eris/FUNC/0095_classic_os_boot.sh
 	chmod +x package/etc/project_eris/SUP/launchers/classic_os/launch.sh
+
+# Shell/logic tests (no ARM toolchain needed). See tests/run_tests.sh for the optional qemu category.
+test:
+	sh tests/run_tests.sh
 
 verify-abi: $(BUILD_DIR)/$(TARGET)
 	$(READELF) -h -d -V -A $(BUILD_DIR)/$(TARGET)

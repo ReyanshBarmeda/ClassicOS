@@ -39,6 +39,7 @@ if [ "${BUILD_SYSTEM}" = "cmake" ]; then
     chmod +x package/opt/classic_os/classic_os
     chmod +x package/opt/classic_os/launch.sh
     chmod +x package/opt/classic_os/bootctl.sh
+    chmod +x package/opt/classic_os/check_runtime.sh
     chmod +x package/etc/project_eris/FUNC/0095_classic_os_boot.sh
     chmod +x package/etc/project_eris/SUP/launchers/classic_os/launch.sh
 elif [ "${BUILD_SYSTEM}" = "make" ]; then
