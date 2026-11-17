@@ -90,6 +90,7 @@ bool ConfigLoader::ParseShellConfigFile(const std::string& path, RuntimeConfig& 
     apply_if("SELECTED_THEME", cfg.selected_theme);
     apply_if("VOL_GAADATA", cfg.vol_gaadata);
     apply_if("CLASSIC_OS_DEFAULT_EXIT_TARGET", cfg.return_target);
+    apply_if("CLASSIC_OS_VIDEO_DRIVER", cfg.video_driver);
 
     auto ra_it = cfg.raw_vars.find("LAUNCH_RA_FROM_STOCK_UI");
     if (ra_it != cfg.raw_vars.end()) {
@@ -152,11 +153,18 @@ RuntimeConfig ConfigLoader::Load(int argc, char* argv[]) {
             cfg.runtime_log_path = argv[++i];
         } else if (arg == "--return-target" && i + 1 < argc) {
             cfg.return_target = argv[++i];
+        } else if (arg == "--video-driver" && i + 1 < argc) {
+            cfg.video_driver = argv[++i];
+        } else if (arg == "--ready-file" && i + 1 < argc) {
+            cfg.ready_file = argv[++i];
         } else if (arg == "--use-retroarch") {
             cfg.launch_ra_from_stock_ui = true;
         }
     }
 
+    if (const char* env_drv = std::getenv("CLASSIC_OS_VIDEODRIVER")) {
+        if (*env_drv) cfg.video_driver = env_drv;
+    }
     return cfg;
 }
 

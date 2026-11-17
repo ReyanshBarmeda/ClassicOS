@@ -83,11 +83,19 @@ bool Launcher::SetPrimaryBootDashboard(bool enable) {
         LogLaunchEvent("Could not open " + cfg_.classic_os_boot_cfg + " for writing (USB not mounted)");
         return false;
     }
+    // Preserve every other key already in the config instead of resetting it to defaults
+    auto keep = [&](const char* key, const char* fallback) {
+        auto it = cfg_.raw_vars.find(key);
+        return (it != cfg_.raw_vars.end() && !it->second.empty()) ? it->second : std::string(fallback);
+    };
     out << "# Classic OS — Project Eris Primary Boot & Supervisor Configuration\n"
         << "CLASSIC_OS_PRIMARY_DASHBOARD=\"" << (enable ? "1" : "0") << "\"\n"
-        << "CLASSIC_OS_HOOK_EMULATIONSTATION=\"" << (enable ? "1" : "0") << "\"\n"
-        << "CLASSIC_OS_DEFAULT_EXIT_TARGET=\"" << cfg_.return_target << "\"\n"
-        << "CLASSIC_OS_MIN_UPTIME_SEC=\"2\"\n";
+        << "CLASSIC_OS_HOOK_EMULATIONSTATION=\"" << keep("CLASSIC_OS_HOOK_EMULATIONSTATION", "0") << "\"\n"
+        << "CLASSIC_OS_DEFAULT_EXIT_TARGET=\"" << keep("CLASSIC_OS_DEFAULT_EXIT_TARGET", "launch_bootmenu") << "\"\n"
+        << "CLASSIC_OS_MIN_UPTIME_SEC=\"" << keep("CLASSIC_OS_MIN_UPTIME_SEC", "2") << "\"\n"
+        << "CLASSIC_OS_MAX_CRASHES=\"" << keep("CLASSIC_OS_MAX_CRASHES", "3") << "\"\n"
+        << "CLASSIC_OS_READY_TIMEOUT_SEC=\"" << keep("CLASSIC_OS_READY_TIMEOUT_SEC", "30") << "\"\n"
+        << "CLASSIC_OS_VIDEO_DRIVER=\"" << keep("CLASSIC_OS_VIDEO_DRIVER", "") << "\"\n";
     out.flush();
     LogLaunchEvent(std::string("Wrote CLASSIC_OS_PRIMARY_DASHBOARD=") + (enable ? "1" : "0") +
                    " to " + cfg_.classic_os_boot_cfg);
@@ -126,7 +134,14 @@ bool Launcher::LaunchGameAndRestore(
 
     // 4. Restore power state and re-initialize SDL2 dashboard
     SetPowerButtonLock(1);
-    renderer.Init(cfg_);
+    if (!renderer.Init(cfg_)) {
+        // The display could not be re-acquired after the emulator exited. Never leave the
+        // console on a black screen: hand control back to Project Eris and leave.
+        LogLaunchEvent("Display re-init failed after '" + game.title + "'; returning to Project Eris Boot Menu");
+        WriteRawLaunchCommand("launch_bootmenu");
+        std::exit(3);
+    }
+    cache.SetRenderer(renderer.raw());   // the old SDL_Renderer was destroyed in Shutdown()
     cache.InitFonts(cfg_);
     input.Init(cfg_);
 

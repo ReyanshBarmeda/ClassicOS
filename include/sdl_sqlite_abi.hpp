@@ -76,6 +76,7 @@ constexpr Uint32 SDL_INIT_GAMECONTROLLER = 0x00002000u;
 // Verified SDL_CreateWindow constants from game_manager @ 0x6d98..0x6da4
 constexpr int    SDL_WINDOWPOS_UNDEFINED = 0x1FFF0000;
 constexpr Uint32 SDL_WINDOW_FULLSCREEN   = 0x00000001u;
+constexpr Uint32 SDL_WINDOW_FULLSCREEN_DESKTOP = 0x00000001u | 0x00001000u;
 constexpr Uint32 SDL_WINDOW_SHOWN        = 0x00000004u;
 
 // SDL_RendererFlags
@@ -275,6 +276,9 @@ const char* SDL_GetError(void);
 int SDL_SetHint(const char* name, const char* value);
 const char* SDL_GetCurrentVideoDriver(void);
 int SDL_GetCurrentDisplayMode(int displayIndex, SDL_DisplayMode* mode);
+int SDL_GetNumVideoDrivers(void);
+const char* SDL_GetVideoDriver(int index);
+void SDL_ClearError(void);
 
 SDL_Window* SDL_CreateWindow(const char* title, int x, int y, int w, int h, Uint32 flags);
 void SDL_DestroyWindow(SDL_Window* window);
@@ -328,6 +332,8 @@ SDL_Joystick* SDL_JoystickOpen(int device_index);
 void SDL_JoystickClose(SDL_Joystick* joystick);
 const char* SDL_JoystickName(SDL_Joystick* joystick);
 int SDL_JoystickNumButtons(SDL_Joystick* joystick);
+int SDL_JoystickNumAxes(SDL_Joystick* joystick);
+int SDL_JoystickNumHats(SDL_Joystick* joystick);
 Uint8 SDL_JoystickGetButton(SDL_Joystick* joystick, int button);
 Sint16 SDL_JoystickGetAxis(SDL_Joystick* joystick, int axis);
 SDL_JoystickID SDL_JoystickInstanceID(SDL_Joystick* joystick);

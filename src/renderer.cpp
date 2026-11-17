@@ -4,7 +4,9 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <sys/stat.h>
 #include <sys/utsname.h>
+#include <vector>
 
 namespace classic_os {
 
@@ -12,64 +14,160 @@ Renderer::~Renderer() {
     Shutdown();
 }
 
+namespace {
+
+bool ProbeFile(const std::string& path) {
+    struct stat st{};
+    return stat(path.c_str(), &st) == 0;
+}
+
+// A Wayland compositor is only usable if its socket exists. SDL's wayland driver
+// needs XDG_RUNTIME_DIR (+ optionally WAYLAND_DISPLAY) to find it.
+bool WaylandSocketAvailable() {
+    const char* rt = std::getenv("XDG_RUNTIME_DIR");
+    if (!rt || !*rt) return false;
+    const char* disp = std::getenv("WAYLAND_DISPLAY");
+    return ProbeFile(std::string(rt) + "/" + ((disp && *disp) ? disp : "wayland-0"));
+}
+
+bool SdlHasVideoDriver(const std::string& name) {
+    const int n = SDL_GetNumVideoDrivers();
+    for (int i = 0; i < n; ++i) {
+        const char* d = SDL_GetVideoDriver(i);
+        if (d && name == d) return true;
+    }
+    return false;
+}
+
+void AppendDiag(const RuntimeConfig& cfg, const std::string& line) {
+    std::ofstream out(cfg.runtime_log_path + "/classic_os_diagnostics.log", std::ios::out | std::ios::app);
+    if (out.is_open()) out << line << "\n";
+}
+
+} // namespace
+
 bool Renderer::Init(const RuntimeConfig& cfg) {
     CollectSystemDiagnostics(cfg);
 
     // Verified hint from Project Eris game_manager @ 0x48e80
     SDL_SetHint("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1");
 
-    // Verified SDL_Init flags from Project Eris game_manager @ 0x6d80 (0x2220)
-    const Uint32 init_flags = SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER;
-    if (SDL_Init(init_flags) < 0) {
-        // Fallback: if Wayland is explicitly forced in env but unavailable on test host, retry default driver
-        const char* err1 = SDL_GetError();
-        std::cerr << "[CLASSIC OS](RENDERER)(WARN) Initial SDL_Init(0x2220) failed: "
-                  << (err1 ? err1 : "unknown") << "\n";
-        if (std::getenv("SDL_VIDEODRIVER") != nullptr) {
-            unsetenv("SDL_VIDEODRIVER");
-            if (SDL_Init(init_flags) < 0) {
-                std::cerr << "[CLASSIC OS](RENDERER)(ERROR) Fallback SDL_Init failed: "
-                          << SDL_GetError() << "\n";
-                WriteDiagnosticsLog(cfg);
-                return false;
-            }
-        } else {
-            WriteDiagnosticsLog(cfg);
-            return false;
-        }
+    // Video backend candidates, in order. The console's real display stack is not assumed:
+    //   1. an explicit override (CLASSIC_OS_VIDEO_DRIVER in classic_os_boot.cfg, --video-driver,
+    //      or the CLASSIC_OS_VIDEODRIVER / SDL_VIDEODRIVER environment variables)
+    //   2. wayland  (only when a compositor socket is actually present)
+    //   3. kmsdrm
+    //   4. SDL's own default order
+    // Each candidate must get all the way through SDL_Init + window + renderer to be accepted;
+    // "dummy"/"offscreen" are never auto-selected because they would "succeed" with no picture.
+    std::vector<std::string> candidates;
+    const char* env_drv = std::getenv("SDL_VIDEODRIVER");
+    if (!cfg.video_driver.empty()) {
+        candidates.push_back(cfg.video_driver);
+    } else if (env_drv && *env_drv) {
+        candidates.push_back(env_drv);
     }
+    candidates.push_back("wayland");
+    candidates.push_back("kmsdrm");
+    candidates.push_back("");
+
+    std::vector<std::string> tried;
+    for (const std::string& cand : candidates) {
+        bool dup = false;
+        for (const auto& t : tried) dup = dup || (t == cand);
+        if (dup) continue;
+        tried.push_back(cand);
+
+        if (cand == "wayland" && cfg.video_driver != "wayland" && !WaylandSocketAvailable()) {
+            AppendDiag(cfg, "[video] skip wayland: no compositor socket (XDG_RUNTIME_DIR/WAYLAND_DISPLAY)");
+            continue;
+        }
+
+        if (cand.empty()) unsetenv("SDL_VIDEODRIVER");
+        else              setenv("SDL_VIDEODRIVER", cand.c_str(), 1);
+
+        SDL_ClearError();
+        if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+            const char* e = SDL_GetError();
+            AppendDiag(cfg, "[video] " + (cand.empty() ? std::string("default") : cand) + ": SDL_Init(VIDEO) failed: " + (e ? e : "?"));
+            SDL_Quit();
+            continue;
+        }
+        if (!cand.empty() && !SdlHasVideoDriver(cand)) {
+            AppendDiag(cfg, "[video] " + cand + ": not compiled into this SDL2");
+            SDL_Quit();
+            continue;
+        }
+        if (TryCreateWindowAndRenderer(cfg, cand)) {
+            const bool headless = (diag_.video_driver == "dummy" || diag_.video_driver == "offscreen");
+            if (headless && cfg.video_driver != diag_.video_driver) {
+                AppendDiag(cfg, "[video] rejected headless backend '" + diag_.video_driver + "' (not explicitly requested)");
+                if (renderer_) { SDL_DestroyRenderer(renderer_); renderer_ = nullptr; }
+                if (window_)   { SDL_DestroyWindow(window_);     window_   = nullptr; }
+                SDL_Quit();
+                continue;
+            }
+            // Joystick / controller subsystems are optional: a failure must not stop the UI
+            // (the dashboard is still usable via GPIO keys), but it is logged.
+            if (SDL_Init(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) < 0) {
+                const char* e = SDL_GetError();
+                std::cerr << "[CLASSIC OS](RENDERER)(WARN) joystick/gamecontroller init failed: " << (e ? e : "?") << "\n";
+                AppendDiag(cfg, std::string("[input] SDL joystick/gamecontroller init failed: ") + (e ? e : "?"));
+            }
+            WriteDiagnosticsLog(cfg, tried);
+            return true;
+        }
+        SDL_Quit();
+    }
+
+    std::cerr << "[CLASSIC OS](RENDERER)(ERROR) No usable SDL2 video backend (tried:";
+    for (const auto& t : tried) std::cerr << " " << (t.empty() ? "default" : t);
+    std::cerr << "). See " << cfg.runtime_log_path << "/classic_os_diagnostics.log\n";
+    WriteDiagnosticsLog(cfg, tried);
+    return false;
+}
+
+bool Renderer::TryCreateWindowAndRenderer(const RuntimeConfig& cfg, const std::string& cand) {
+    const std::string label = cand.empty() ? std::string("default") : cand;
 
     // Verified SDL_CreateWindow parameters from Project Eris game_manager @ 0x6d94..0x6db4:
-    // x = 0x1FFF0000 (SDL_WINDOWPOS_UNDEFINED), y = 0x1FFF0000, w = 1280, h = 720, flags = SDL_WINDOW_FULLSCREEN (0x1)
-    Uint32 win_flags = SDL_WINDOW_FULLSCREEN;
+    // x = y = SDL_WINDOWPOS_UNDEFINED, w = 1280, h = 720, flags = SDL_WINDOW_FULLSCREEN.
+    // If the display has no exact 1280x720 mode (HDMI sink / kmsdrm), fall back to the desktop
+    // mode; SDL_RenderSetLogicalSize() below then scales the fixed 1280x720 UI to the real output.
+    std::vector<Uint32> window_modes;
     if (std::getenv("CLASSIC_OS_WINDOWED") != nullptr) {
-        win_flags = SDL_WINDOW_SHOWN;
+        window_modes.push_back(SDL_WINDOW_SHOWN);
+    } else {
+        window_modes.push_back(SDL_WINDOW_FULLSCREEN);
+        window_modes.push_back(SDL_WINDOW_FULLSCREEN_DESKTOP);
+        window_modes.push_back(SDL_WINDOW_SHOWN);
     }
 
-    window_ = SDL_CreateWindow(
-        "Classic OS",
-        SDL_WINDOWPOS_UNDEFINED,
-        SDL_WINDOWPOS_UNDEFINED,
-        kLogicalWidth,
-        kLogicalHeight,
-        win_flags);
+    for (Uint32 wf : window_modes) {
+        window_ = SDL_CreateWindow("Classic OS", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+                                   kLogicalWidth, kLogicalHeight, wf);
+        if (!window_) {
+            const char* e = SDL_GetError();
+            AppendDiag(cfg, "[video] " + label + ": SDL_CreateWindow(flags=" + std::to_string(wf) + ") failed: " + (e ? e : "?"));
+            continue;
+        }
 
-    if (!window_) {
-        std::cerr << "[CLASSIC OS](RENDERER)(ERROR) SDL_CreateWindow(1280x720) failed: "
-                  << SDL_GetError() << "\n";
-        WriteDiagnosticsLog(cfg);
-        return false;
-    }
+        // Verified SDL_CreateRenderer parameters from game_manager @ 0x6db8..0x6dc4: (-1, 0) = SDL picks
+        // the accelerated driver first. Fall back to the software renderer so a missing GPU/GLES stack
+        // still produces a picture instead of a black screen.
+        const Uint32 renderer_flags[2] = {0u, SDL_RENDERER_SOFTWARE};
+        for (Uint32 rf : renderer_flags) {
+            renderer_ = SDL_CreateRenderer(window_, -1, rf);
+            if (renderer_) break;
+            const char* e = SDL_GetError();
+            AppendDiag(cfg, "[video] " + label + ": SDL_CreateRenderer(flags=" + std::to_string(rf) + ") failed: " + (e ? e : "?"));
+        }
+        if (renderer_) break;
 
-    // Verified SDL_CreateRenderer parameters from Project Eris game_manager @ 0x6db8..0x6dc4:
-    // index = -1, flags = 0 (lets SDL2 pick accelerated driver first, then fallback)
-    renderer_ = SDL_CreateRenderer(window_, -1, 0);
-    if (!renderer_) {
-        std::cerr << "[CLASSIC OS](RENDERER)(ERROR) SDL_CreateRenderer(win, -1, 0) failed: "
-                  << SDL_GetError() << "\n";
         SDL_DestroyWindow(window_);
         window_ = nullptr;
-        WriteDiagnosticsLog(cfg);
+    }
+    if (!window_ || !renderer_) {
         return false;
     }
 
@@ -79,6 +177,13 @@ bool Renderer::Init(const RuntimeConfig& cfg) {
     // Collect runtime SDL2 driver & renderer diagnostics
     const char* vdrv = SDL_GetCurrentVideoDriver();
     diag_.video_driver = vdrv ? vdrv : "unknown";
+
+    SDL_DisplayMode dm{};
+    if (SDL_GetCurrentDisplayMode(0, &dm) == 0) {
+        diag_.display_width  = dm.w;
+        diag_.display_height = dm.h;
+        diag_.display_hz     = dm.refresh_rate;
+    }
 
     SDL_GetWindowSize(window_, &diag_.window_width, &diag_.window_height);
     if (SDL_GetRendererOutputSize(renderer_, &diag_.output_width, &diag_.output_height) != 0) {
@@ -95,8 +200,6 @@ bool Renderer::Init(const RuntimeConfig& cfg) {
         diag_.max_texture_width    = rinfo.max_texture_width;
         diag_.max_texture_height   = rinfo.max_texture_height;
     }
-
-    WriteDiagnosticsLog(cfg);
     return true;
 }
 
@@ -212,9 +315,10 @@ void Renderer::CollectSystemDiagnostics(const RuntimeConfig& /*cfg*/) {
     }
 }
 
-void Renderer::WriteDiagnosticsLog(const RuntimeConfig& cfg) const {
+void Renderer::WriteDiagnosticsLog(const RuntimeConfig& cfg, const std::vector<std::string>& tried) const {
     const std::string log_path = cfg.runtime_log_path + "/classic_os_diagnostics.log";
-    std::ofstream out(log_path, std::ios::out | std::ios::trunc);
+    // Append: AppendDiag() lines written during backend probing must survive
+    std::ofstream out(log_path, std::ios::out | std::ios::app);
     if (!out.is_open()) {
         return;
     }
@@ -229,6 +333,10 @@ void Renderer::WriteDiagnosticsLog(const RuntimeConfig& cfg) const {
     out << "HW Acceleration   : " << (diag_.hardware_accelerated ? "YES (SDL_RENDERER_ACCELERATED)" : "NO (Software Fallback)") << "\n";
     out << "VSync Present     : " << (diag_.vsync_enabled ? "YES" : "NO") << "\n";
     out << "Target Texture    : " << (diag_.target_texture_ok ? "YES" : "NO") << "\n";
+    out << "Backends tried    :";
+    for (const auto& t : tried) out << " " << (t.empty() ? "default" : t);
+    out << "\n";
+    out << "Display Mode      : " << diag_.display_width << "x" << diag_.display_height << "@" << diag_.display_hz << "Hz\n";
     out << "Window Geometry   : " << diag_.window_width << "x" << diag_.window_height << "\n";
     out << "Output Buffer     : " << diag_.output_width << "x" << diag_.output_height << "\n";
     out << "Max Texture Dim   : " << diag_.max_texture_width << "x" << diag_.max_texture_height << "\n";

@@ -59,6 +59,7 @@ public:
 
 private:
     void ScanDevices();
+    void Log(const std::string& msg) const;
     NavAction MapGameControllerButton(Uint8 button) const;
     NavAction MapRawPscJoystickButton(Uint8 button) const;
     NavAction MapKeyboardKey(SDL_Keycode sym) const;
@@ -67,6 +68,7 @@ private:
     std::vector<SDL_Joystick*> raw_joysticks_;
     std::string primary_pad_name_ = "Sony Interactive Entertainment Controller";
     bool mappings_loaded_ = false;
+    std::string log_path_;
 
     // Axis digital edge & auto-repeat state
     int held_dir_x_ = 0;
