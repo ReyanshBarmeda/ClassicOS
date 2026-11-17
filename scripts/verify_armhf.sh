@@ -88,8 +88,14 @@ check "hard-float ABI" "not hard-float ABI (-mfloat-abi=hard missing)" has "${HD
 check "Tag_CPU_arch: v8" "Tag_CPU_arch is not v8" has "${ATTR}" 'Tag_CPU_arch:[[:space:]]+v8$'
 check "Tag_FP_arch: FP for ARMv8" "Tag_FP_arch is not 'FP for ARMv8'" \
     has "${ATTR}" 'Tag_FP_arch:[[:space:]]+FP for ARMv8'
-check "VFP register argument passing (hard-float)" "Tag_ABI_VFP_args is not 'VFP registers'" \
-    has "${ATTR}" 'Tag_ABI_VFP_args:[[:space:]]+VFP registers'
+# GCC writes Tag_ABI_VFP_args; clang/LLVM omits it and relies on the e_flags hard-float marker
+# (checked above). Accept either, fail only if the tag is present and says something else.
+if has "${ATTR}" 'Tag_ABI_VFP_args:'; then
+    check "VFP register argument passing (hard-float)" "Tag_ABI_VFP_args is not 'VFP registers'" \
+        has "${ATTR}" 'Tag_ABI_VFP_args:[[:space:]]+VFP registers'
+else
+    pass "hard-float marked in ELF header flags (no Tag_ABI_VFP_args; clang-style build)"
+fi
 if has "${SECS}" '[[:space:]]\.symtab[[:space:]]'; then
     warn "binary still has a .symtab (not stripped)"
 fi
@@ -106,7 +112,7 @@ done
 #--- 3. DT_NEEDED allowlist -------------------------------------------------------
 echo "--- Shared library dependencies (DT_NEEDED)"
 NEEDED="$(printf '%s\n' "${DYN}" | sed -n 's/.*Shared library: \[\(.*\)\].*/\1/p')"
-ALLOWED="libSDL2-2.0.so.0 libpng16.so.16 libsqlite3.so.0 libm.so.6 libc.so.6 libdl.so.2 libpthread.so.0 ld-linux-armhf.so.3 ${PSC_EXTRA_NEEDED}"
+ALLOWED="libSDL2-2.0.so.0 libpng16.so.16 libsqlite3.so.0 libm.so.6 libc.so.6 libdl.so.2 libpthread.so.0 librt.so.1 ld-linux-armhf.so.3 ${PSC_EXTRA_NEEDED}"
 for lib in libSDL2-2.0.so.0 libpng16.so.16 libsqlite3.so.0; do
     check "links ${lib}" "expected DT_NEEDED ${lib} is missing" \
         has "${NEEDED}" "^$(printf '%s' "${lib}" | sed 's/\./\\./g')\$"
@@ -163,6 +169,7 @@ REQUIRED_FILES="
 opt/classic_os/classic_os
 opt/classic_os/launch.sh
 opt/classic_os/bootctl.sh
+opt/classic_os/check_runtime.sh
 etc/project_eris/CFG/classic_os_boot.cfg
 etc/project_eris/FUNC/0095_classic_os_boot.sh
 etc/project_eris/SUP/launchers/classic_os/launch.sh
@@ -178,6 +185,7 @@ EXEC_FILES="
 opt/classic_os/classic_os
 opt/classic_os/launch.sh
 opt/classic_os/bootctl.sh
+opt/classic_os/check_runtime.sh
 etc/project_eris/FUNC/0095_classic_os_boot.sh
 etc/project_eris/SUP/launchers/classic_os/launch.sh
 "
@@ -188,6 +196,7 @@ done
 SH_FILES="
 opt/classic_os/launch.sh
 opt/classic_os/bootctl.sh
+opt/classic_os/check_runtime.sh
 etc/project_eris/FUNC/0095_classic_os_boot.sh
 etc/project_eris/SUP/launchers/classic_os/launch.sh
 etc/project_eris/CFG/classic_os_boot.cfg
@@ -196,6 +205,14 @@ etc/project_eris/SUP/launchers/classic_os/launcher.cfg
 for rel in ${SH_FILES}; do
     if [ -f "${PKG_DIR}/${rel}" ]; then
         check "POSIX sh syntax: ${rel}" "sh -n failed: ${rel}" sh -n "${PKG_DIR}/${rel}"
+    fi
+done
+
+# Windows line endings in a script sourced by Project Eris at boot break the console's startup
+has_cr() { grep -q "$(printf '\r')" "$1"; }
+for rel in ${SH_FILES} etc/boot_menu/boot_items/004_classic_os.json; do
+    if [ -f "${PKG_DIR}/${rel}" ]; then
+        if has_cr "${PKG_DIR}/${rel}"; then fail "CR (Windows line ending) found in ${rel}"; else pass "LF line endings: ${rel}"; fi
     fi
 done
 

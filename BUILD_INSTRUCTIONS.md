@@ -109,23 +109,33 @@ This compiles `classic_os` with `-march=armv8-a+crc -mtune=cortex-a35 -mfpu=neon
 > **Important Safety Note**: Nothing is installed onto the PlayStation Classic's internal NAND flash. All files reside exclusively on your removable Project Eris `SONY` USB drive.
 
 ### Installing onto Your Project Eris USB Drive
-1. Power off your PlayStation Classic and insert your Project Eris USB drive (labeled `SONY`) into your computer.
-2. Copy the contents of `package/` onto the `project_eris` folder at the root of the USB drive (`<USB_ROOT>/project_eris/`):
+Use the installer (`installer/install.sh`, shipped in the release zip next to `payload/`). It never overwrites anything without a backup, never touches the console's internal storage and refuses to run unless Project Eris is already on the drive. Auto-boot is **off** after a fresh install: start Classic OS from the Project Eris menu first, and only enable auto-boot once that works.
+
+1. Power off the console and plug the Project Eris USB drive (`SONY`) into your computer.
+2. Preview, then install (Linux/macOS terminal, or Git Bash on Windows where the drive `E:` is `/e`):
    ```sh
-   # Example assuming your SONY USB drive is mounted at /mnt/usb:
-   cp -rf package/opt/* /mnt/usb/project_eris/opt/
-   cp -rf package/etc/* /mnt/usb/project_eris/etc/
-   sync
+   sh ./install.sh /media/$USER/SONY --dry-run     # shows what would change, changes nothing
+   sh ./install.sh /media/$USER/SONY               # Windows Git Bash: sh ./install.sh /e
    ```
-   This installs:
-   - `/media/project_eris/opt/classic_os/classic_os` (native ARM executable)
-   - `/media/project_eris/opt/classic_os/launch.sh` (primary/manual launcher script)
-   - `/media/project_eris/opt/classic_os/bootctl.sh` (reversible boot mode utility)
-   - `/media/project_eris/opt/classic_os/assets/...` (dashboard icons & fonts)
-   - `/media/project_eris/etc/project_eris/CFG/classic_os_boot.cfg` (persistent primary boot configuration)
-   - `/media/project_eris/etc/project_eris/FUNC/0095_classic_os_boot.sh` (supervisor auto-boot hook)
-   - `/media/project_eris/etc/project_eris/SUP/launchers/classic_os/*` (Stock UI carousel launcher)
-   - `/media/project_eris/etc/boot_menu/boot_items/004_classic_os.json` (Boot Menu launcher descriptor)
+3. Eject the drive from the OS before unplugging it.
+
+Every replaced file is first copied to `<USB>/project_eris/.classic_os_backup/<timestamp>/`. An existing `classic_os_boot.cfg` is kept. Windows line endings (CRLF) are stripped from the scripts, because Project Eris sources `FUNC/*.sh` at boot and a stray CR can break it.
+
+**Rollback / uninstall** (restores the backed-up files, removes only files the installer added and only if you have not modified them):
+```sh
+sh ./uninstall.sh /media/$USER/SONY --dry-run
+sh ./uninstall.sh /media/$USER/SONY
+```
+**If the console misbehaves and you cannot run anything:** create an empty file named `CLASSIC_OS_RECOVERY` in the USB root. The boot hook then skips Classic OS and shows the original Project Eris menu.
+
+For the full verification status, dependency report and what to send if it does not boot, see [`docs/BOOT_READINESS.md`](docs/BOOT_READINESS.md). Run `make test` (or `sh tests/run_tests.sh`) for the shell/installer test suite.
+
+Files installed under `<USB>/project_eris/`:
+- `opt/classic_os/classic_os` (native ARM executable), `launch.sh`, `bootctl.sh`, `check_runtime.sh`, `assets/`
+- `etc/project_eris/CFG/classic_os_boot.cfg` (supervisor configuration; kept if it already exists)
+- `etc/project_eris/FUNC/0095_classic_os_boot.sh` (boot hook, installed last)
+- `etc/project_eris/SUP/launchers/classic_os/*` (Stock UI carousel launcher)
+- `etc/boot_menu/boot_items/004_classic_os.json` (Boot Menu entry)
 
 ### Switching Between Primary Auto-Boot and Standard Project Eris Boot Menu
 You have **four independent ways** to switch back to the original Project Eris Boot Menu at any time:

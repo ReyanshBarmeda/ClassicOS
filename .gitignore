@@ -1,0 +1,6 @@
+# build outputs (produced by CI / make package, never committed)
+build/
+build-*/
+dist/
+package/opt/classic_os/classic_os
+package/opt/classic_os/assets/

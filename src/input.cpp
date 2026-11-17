@@ -1,5 +1,7 @@
 #include "input.hpp"
+#include <fstream>
 #include <iostream>
+#include <sys/stat.h>
 
 namespace classic_os {
 
@@ -8,16 +10,39 @@ InputManager::~InputManager() {
 }
 
 bool InputManager::Init(const RuntimeConfig& cfg) {
-    // Load Project Eris gamecontrollerdb.txt if available (verified path from game_manager & sdl_remap_arm.so)
-    SDL_RWops* rw = SDL_RWFromFile(cfg.controller_db.c_str(), "rb");
-    if (rw) {
-        if (SDL_GameControllerAddMappingsFromRW(rw, 1) >= 0) {
+    log_path_ = cfg.runtime_log_path + "/classic_os_diagnostics.log";
+
+    // Load a gamecontrollerdb.txt if one exists. The BleemSync path is the one verified in
+    // game_manager / sdl_remap_arm.so; the others are checked so a plain Project Eris install works too.
+    const std::string candidates[] = {
+        cfg.controller_db,
+        cfg.project_eris_path + "/etc/boot_menu/gamecontrollerdb.txt",
+        cfg.project_eris_path + "/opt/classic_os/gamecontrollerdb.txt",
+        "gamecontrollerdb.txt"
+    };
+    mappings_loaded_ = false;
+    for (const auto& path : candidates) {
+        struct stat st{};
+        if (stat(path.c_str(), &st) != 0) continue;
+        SDL_RWops* rw = SDL_RWFromFile(path.c_str(), "rb");
+        if (rw && SDL_GameControllerAddMappingsFromRW(rw, 1) >= 0) {
             mappings_loaded_ = true;
+            Log("gamecontrollerdb loaded from " + path);
+            break;
         }
+    }
+    if (!mappings_loaded_) {
+        Log("no gamecontrollerdb.txt found; pads without a built-in SDL mapping use the raw PSC joystick map");
     }
 
     ScanDevices();
     return true;
+}
+
+void InputManager::Log(const std::string& msg) const {
+    if (log_path_.empty()) return;
+    std::ofstream out(log_path_, std::ios::out | std::ios::app);
+    if (out.is_open()) out << "[input] " << msg << "\n";
 }
 
 void InputManager::Shutdown() {
@@ -35,6 +60,7 @@ void InputManager::Shutdown() {
 void InputManager::ScanDevices() {
     Shutdown();
     const int num = SDL_NumJoysticks();
+    Log("SDL_NumJoysticks=" + std::to_string(num));
     for (int i = 0; i < num; ++i) {
         const char* name = SDL_JoystickNameForIndex(i);
         if (name && i == 0) {
@@ -44,12 +70,18 @@ void InputManager::ScanDevices() {
             SDL_GameController* gc = SDL_GameControllerOpen(i);
             if (gc) {
                 controllers_.push_back(gc);
+                Log(std::string("pad ") + std::to_string(i) + " '" + (name ? name : "?") + "': SDL GameController mapping");
                 continue;
             }
         }
         SDL_Joystick* js = SDL_JoystickOpen(i);
         if (js) {
             raw_joysticks_.push_back(js);
+            Log(std::string("pad ") + std::to_string(i) + " '" + (name ? name : "?") + "': raw joystick (buttons=" +
+                std::to_string(SDL_JoystickNumButtons(js)) + " axes=" + std::to_string(SDL_JoystickNumAxes(js)) +
+                " hats=" + std::to_string(SDL_JoystickNumHats(js)) + ")");
+        } else {
+            Log(std::string("pad ") + std::to_string(i) + " could not be opened");
         }
     }
 }
@@ -200,6 +232,27 @@ std::vector<NavAction> InputManager::PollActions(uint64_t now_ms) {
                             if (dir > 0) actions.push_back(NavAction::Down);
                             next_repeat_y_ms_ = now_ms + 260;
                         }
+                    }
+                }
+                break;
+            }
+
+            case SDL_JOYHATMOTION: {
+                // The PSC d-pad may be reported as a hat rather than axes 0/1 on raw (unmapped) pads
+                if (SDL_GameControllerFromInstanceID(ev.jhat.which) == nullptr) {
+                    const int dx = (ev.jhat.value & SDL_HAT_LEFT) ? -1 : ((ev.jhat.value & SDL_HAT_RIGHT) ? 1 : 0);
+                    const int dy = (ev.jhat.value & SDL_HAT_UP)   ? -1 : ((ev.jhat.value & SDL_HAT_DOWN)  ? 1 : 0);
+                    if (dx != held_dir_x_) {
+                        held_dir_x_ = dx;
+                        if (dx < 0) actions.push_back(NavAction::Left);
+                        if (dx > 0) actions.push_back(NavAction::Right);
+                        next_repeat_x_ms_ = now_ms + 260;
+                    }
+                    if (dy != held_dir_y_) {
+                        held_dir_y_ = dy;
+                        if (dy < 0) actions.push_back(NavAction::Up);
+                        if (dy > 0) actions.push_back(NavAction::Down);
+                        next_repeat_y_ms_ = now_ms + 260;
                     }
                 }
                 break;

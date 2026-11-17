@@ -29,6 +29,8 @@ struct RuntimeConfig {
     std::string launch_cmd_file     = "/tmp/launchfilecommand";
     std::string power_disable_file  = "/data/power/disable";
     std::string return_target       = "launch_bootmenu"; // "launch_bootmenu" or "launch_stockui"
+    std::string video_driver;                            // "" = auto-detect (wayland -> kmsdrm -> SDL default)
+    std::string ready_file          = "/tmp/classic_os_ready"; // touched after first presented frame
 
     bool launch_ra_from_stock_ui    = false;
     bool config_file_loaded         = false;

@@ -9,6 +9,8 @@ on:
       - 'include/**'
       - 'assets/**'
       - 'package/**'
+      - 'installer/**'
+      - 'tests/**'
       - 'scripts/**'
       - 'cmake/**'
       - 'Makefile'
@@ -20,6 +22,8 @@ on:
       - 'include/**'
       - 'assets/**'
       - 'package/**'
+      - 'installer/**'
+      - 'tests/**'
       - 'scripts/**'
       - 'cmake/**'
       - 'Makefile'
@@ -56,6 +60,9 @@ jobs:
           python3 -m json.tool package/etc/boot_menu/boot_items/004_classic_os.json > /dev/null
           exit "$status"
 
+      - name: Boot-script, supervisor and installer tests (Category 1, no hardware)
+        run: sh tests/run_tests.sh
+
       - name: Build, package and verify in Debian 10 (glibc 2.28)
         run: |
           docker run --rm \
@@ -67,20 +74,31 @@ jobs:
             debian:buster \
             sh scripts/ci_build_buster.sh
 
-      - name: Create candidate archive
+      - name: Create installable release zip
         run: |
           short_sha="${GITHUB_SHA::7}"
-          mkdir -p dist
-          tar -C package --owner=0 --group=0 -czf "dist/ClassicOS-ARMHF-${short_sha}.tar.gz" .
-          (cd dist && sha256sum "ClassicOS-ARMHF-${short_sha}.tar.gz" > "ClassicOS-ARMHF-${short_sha}.tar.gz.sha256")
-          echo "Archive contents (modes preserved):"
-          tar -tvzf "dist/ClassicOS-ARMHF-${short_sha}.tar.gz"
-          cat "dist/ClassicOS-ARMHF-${short_sha}.tar.gz.sha256"
+          name="ClassicOS-ARMHF-${short_sha}"
+          rm -rf stage && mkdir -p "stage/${name}" dist
+          cp -R package "stage/${name}/payload"
+          cp installer/install.sh installer/uninstall.sh "stage/${name}/"
+          cp BUILD_INSTRUCTIONS.md "stage/${name}/"
+          mkdir -p "stage/${name}/docs" && cp docs/BOOT_READINESS.md "stage/${name}/docs/"
+          chmod +x "stage/${name}/install.sh" "stage/${name}/uninstall.sh"
+          (cd stage && zip -qr "../dist/${name}.zip" "${name}")
+          (cd dist && sha256sum "${name}.zip" > "${name}.zip.sha256" && cat "${name}.zip.sha256")
+          unzip -l "dist/${name}.zip"
+
+      - name: Installer dry run against the built payload
+        run: |
+          name="ClassicOS-ARMHF-${GITHUB_SHA::7}"
+          usb="$(mktemp -d)"
+          mkdir -p "${usb}/project_eris/etc/project_eris/FUNC"
+          (cd "stage/${name}" && sh ./install.sh "${usb}" --dry-run)
 
       - name: Upload build package
         uses: actions/upload-artifact@v4
         with:
-          name: ClassicOS-ARMHF-candidate
+          name: ClassicOS-ARMHF-boot-ready
           path: dist/
           if-no-files-found: error
           retention-days: 30

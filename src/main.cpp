@@ -16,6 +16,8 @@ int main(int argc, char* argv[]) {
                       << "  --roms-folder <dir>        Override /media/roms folder\n"
                       << "  --log-folder <dir>         Override /media/logs folder\n"
                       << "  --return-target <token>    Supervisor exit command (launch_bootmenu or launch_stockui)\n"
+                      << "  --video-driver <name>      Force an SDL2 video backend (default: auto wayland -> kmsdrm -> SDL default)\n"
+                      << "  --ready-file <path>        File touched after the first presented frame (supervisor watchdog)\n"
                       << "  --use-retroarch            Prefer RetroArch cores for PS1 games\n";
             return 0;
         }

@@ -25,6 +25,8 @@ public:
     TextureCache& operator=(const TextureCache&) = delete;
 
     bool InitFonts(const RuntimeConfig& cfg);
+    // Must be called whenever the owning Renderer is re-created (e.g. after a game exits)
+    void SetRenderer(SDL_Renderer* renderer) { renderer_ = renderer; }
     void ClearAll();
 
     // Image texture LRU (loads via libpng16 / SDL2_image and evicts oldest when over budget)

@@ -4,6 +4,7 @@
 #include "sdl_sqlite_abi.hpp"
 #include "config.hpp"
 #include <string>
+#include <vector>
 
 namespace classic_os {
 
@@ -17,6 +18,9 @@ struct DisplayDiagnostics {
     int window_height         = 0;
     int output_width          = 0;
     int output_height         = 0;
+    int display_width         = 0;
+    int display_height        = 0;
+    int display_hz            = 0;
     int max_texture_width     = 0;
     int max_texture_height    = 0;
     std::string cpu_arch_info;
@@ -56,7 +60,8 @@ public:
 
 private:
     void CollectSystemDiagnostics(const RuntimeConfig& cfg);
-    void WriteDiagnosticsLog(const RuntimeConfig& cfg) const;
+    bool TryCreateWindowAndRenderer(const RuntimeConfig& cfg, const std::string& cand);
+    void WriteDiagnosticsLog(const RuntimeConfig& cfg, const std::vector<std::string>& tried) const;
 
     SDL_Window* window_     = nullptr;
     SDL_Renderer* renderer_ = nullptr;

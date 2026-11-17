@@ -259,6 +259,12 @@ TextureCache::~TextureCache() {
 
 bool TextureCache::InitFonts(const RuntimeConfig& cfg) {
     auto& libs = GetDynLibs();
+    // Re-entrant: Launcher::LaunchGameAndRestore() calls this again after a game exits
+    for (int i = 0; i < 5; ++i) {
+        if (fonts_[i] && libs.p_TTF_CloseFont) libs.p_TTF_CloseFont(fonts_[i]);
+        fonts_[i] = nullptr;
+    }
+    active_font_path_.clear();
     if (!libs.p_TTF_Init || !libs.p_TTF_OpenFont) {
         active_font_path_ = "Built-in Vector/Bitmap Fallback (libSDL2_ttf not loaded)";
         return true;

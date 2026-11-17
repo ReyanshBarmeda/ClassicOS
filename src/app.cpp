@@ -1,10 +1,18 @@
 #include "app.hpp"
 #include <chrono>
+#include <csignal>
+#include <fstream>
+#include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <thread>
 
 namespace classic_os {
+
+namespace {
+volatile std::sig_atomic_t g_stop_signal = 0;
+void OnStopSignal(int sig) { g_stop_signal = sig; }
+} // namespace
 
 Application::Application(int argc, char* argv[])
     : cfg_(ConfigLoader::Load(argc, argv)) {}
@@ -27,12 +35,23 @@ void Application::SleepMicros(uint64_t micros) {
 int Application::Run() {
     Launcher launcher(cfg_);
 
+    // The supervisor stops us with SIGTERM when the dashboard never comes up (watchdog) or on
+    // shutdown; leave the main loop cleanly so the power-button lock and SDL are released.
+    std::signal(SIGTERM, OnStopSignal);
+    std::signal(SIGINT, OnStopSignal);
+
+    // Start every run with a fresh diagnostics log (Renderer/InputManager append to it)
+    { std::ofstream(cfg_.runtime_log_path + "/classic_os_diagnostics.log", std::ios::out | std::ios::trunc); }
+    std::remove(cfg_.ready_file.c_str());
+
     // Pre-seed default return command in /tmp/launchfilecommand (matches opt/emulationstation/launch.sh)
     launcher.WriteRawLaunchCommand(cfg_.return_target);
     launcher.SetPowerButtonLock(2);
 
     if (!renderer_.Init(cfg_)) {
         std::cerr << "[CLASSIC OS](APP)(ERROR) Failed to initialize SDL2 renderer.\n";
+        // Whatever --return-target was requested, a failed start must land in the Project Eris menu
+        launcher.WriteRawLaunchCommand("launch_bootmenu");
         launcher.SetPowerButtonLock(1);
         return 1;
     }
@@ -56,7 +75,13 @@ int Application::Run() {
     bool running           = true;
     ExitTarget exit_target = (cfg_.return_target == "launch_stockui") ? ExitTarget::StockUI : ExitTarget::BootMenu;
 
+    bool ready_signalled = false;
+
     while (running) {
+        if (g_stop_signal != 0) {
+            // Watchdog/supervisor requested a stop. The supervisor decides what happens next.
+            break;
+        }
         const uint64_t frame_start_us = MonotonicMicros();
         const uint64_t now_ms         = frame_start_us / 1000;
         const float dt_sec            = static_cast<float>(frame_start_us - last_frame_us) / 1000000.0f;
@@ -79,6 +104,12 @@ int Application::Run() {
         renderer_.BeginFrame({11, 10, 18, 255});
         dashboard.Render();
         renderer_.EndFrame();
+
+        if (!ready_signalled) {
+            // First frame has been presented: tell the supervisor the display really came up
+            std::ofstream(cfg_.ready_file, std::ios::out | std::ios::trunc) << "ok\n";
+            ready_signalled = true;
+        }
 
         ++rendered_frames;
         if (max_frames > 0 && rendered_frames >= max_frames) {
