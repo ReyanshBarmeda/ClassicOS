@@ -15,8 +15,8 @@
 Limits of Category 1/2 (read these before trusting the result):
 - Events are injected at the SDL level. The kernel evdev → SDL controller-mapping path is **not** exercised.
 - The emulator uses an Ubuntu glibc 2.39 loader and SDL 2.30, not the console's glibc 2.28 and Sony's own libraries.
-- The shipped test binary was built with zig/clang targeting glibc 2.28, not with the repo's normal GCC/Debian 10 CI toolchain. The CI workflow builds the "official" binary; the workflow changes in this branch could not be run from the authoring environment.
-- The Debian 10 CI build compiles against SDL 2.0.9 headers. Every SDL function the code uses exists in 2.0.9, but that compile has not been run here; the first CI run is its test.
+- The shipped test binary was built with zig/clang targeting glibc 2.28, not with the repo's normal GCC/Debian 10 CI toolchain. The CI workflow builds the "official" binary.
+- The Debian 10 CI build (glibc 2.28, SDL 2.0.9 headers, GCC) compiled, passed `verify_armhf.sh` and the Category 1 tests, and produced the release zip on GitHub Actions (PR #3 run). The CI-built binary has not been run under an emulator; only the zig-built binary has.
 - Minimum-uptime detection has about 1 second granularity (`launch.sh` polls once per second).
 
 ## 2. What changed (by requirement)
